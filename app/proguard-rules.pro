@@ -5,6 +5,9 @@
 -dontwarn okhttp3.**
 -dontwarn retrofit2.**
 
+# Tink / EncryptedSharedPreferences
+-dontwarn com.google.errorprone.annotations.**
+
 # Kotlinx Serialization
 -keepattributes *Annotation*, InnerClasses
 -dontnote kotlinx.serialization.AnnotationsKt
