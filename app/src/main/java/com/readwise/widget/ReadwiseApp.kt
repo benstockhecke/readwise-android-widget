@@ -10,6 +10,7 @@ import com.readwise.widget.data.AppDatabase
 import com.readwise.widget.data.HighlightRepository
 import com.readwise.widget.data.SettingsDataStore
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
 // Extension property that creates a single DataStore instance scoped to the application
@@ -34,7 +35,15 @@ class ReadwiseApp : Application() {
 
     /** DataStore wrapper that exposes all user settings as typed flows. */
     val settingsDataStore: SettingsDataStore by lazy {
-        SettingsDataStore(dataStore)
+        SettingsDataStore(dataStore, this)
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        // Migrate any plain-text API token to encrypted storage on first launch after update
+        kotlinx.coroutines.MainScope().launch {
+            settingsDataStore.migrateTokenIfNeeded()
+        }
     }
 
     /**

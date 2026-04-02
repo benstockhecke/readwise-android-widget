@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.glance.appwidget.updateAll
 import com.readwise.widget.ReadwiseApp
+import com.readwise.widget.api.ReadwiseAuthException
 import com.readwise.widget.data.BookEntity
 import com.readwise.widget.data.TagEntity
 import com.readwise.widget.widget.HighlightWidget
@@ -250,6 +251,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 _syncState.value = SyncState.Success(count)
                 // Refresh filter lists with data from the newly synced dataset
                 loadFilters()
+            } catch (_: ReadwiseAuthException) {
+                _syncState.value = SyncState.Error(
+                    "Invalid or expired API token. Please check your token in Readwise account settings."
+                )
             } catch (e: Exception) {
                 _syncState.value = SyncState.Error(e.message ?: "Unknown error")
             }

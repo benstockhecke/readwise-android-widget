@@ -183,6 +183,14 @@ interface HighlightDao {
     @Query("UPDATE highlights SET excluded = :excluded")
     suspend fun setAllExcluded(excluded: Boolean)
 
+    /** Returns the IDs of all highlights currently marked as excluded. */
+    @Query("SELECT id FROM highlights WHERE excluded = 1")
+    suspend fun getExcludedHighlightIds(): List<Long>
+
+    /** Marks the given highlight IDs as excluded. */
+    @Query("UPDATE highlights SET excluded = 1 WHERE id IN (:ids)")
+    suspend fun restoreExcludedFlags(ids: List<Long>)
+
     // ── Insert ────────────────────────────────────────────────────────
 
     /** Inserts or replaces a batch of highlights. */
@@ -290,7 +298,7 @@ data class HighlightWithBookTuple(
         HighlightTagCrossRef::class,
     ],
     version = 2,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
 

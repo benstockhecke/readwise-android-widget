@@ -1,5 +1,7 @@
 package com.readwise.widget.data
 
+import android.content.Context
+import android.content.SharedPreferences
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -8,25 +10,44 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 
 /**
  * Typed wrapper around Jetpack DataStore that exposes all user-configurable
  * settings as [Flow]s and provides suspend functions to update each value.
  *
- * Every setting is backed by a dedicated [Preferences] key defined in [Keys].
+ * The API token is stored separately in [EncryptedSharedPreferences] to protect
+ * it from extraction on rooted devices or via backup.
+ *
+ * Every other setting is backed by a dedicated [Preferences] key defined in [Keys].
  * Callers observe settings reactively via the Flow properties and write changes
  * with the corresponding `set*` suspend function.
  *
  * @param dataStore The underlying [DataStore] instance provided by the application.
+ * @param context Application context used to initialise encrypted storage.
  */
-class SettingsDataStore(private val dataStore: DataStore<Preferences>) {
+class SettingsDataStore(private val dataStore: DataStore<Preferences>, context: Context) {
+
+    private val encryptedPrefs: SharedPreferences by lazy {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        EncryptedSharedPreferences.create(
+            context,
+            "secure_settings",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    }
 
     // ── Keys ────────────────────────────────────────────────────────────
     /** Typed preference keys for every stored setting. */
     private object Keys {
-        val API_TOKEN = stringPreferencesKey("api_token")
         val REFRESH_INTERVAL_MINUTES = intPreferencesKey("refresh_interval_minutes")
         val FILTER_BOOK_ID = longPreferencesKey("filter_book_id")
         val FILTER_TAG_NAME = stringPreferencesKey("filter_tag_name")
@@ -43,16 +64,34 @@ class SettingsDataStore(private val dataStore: DataStore<Preferences>) {
         val MAX_HIGHLIGHT_LENGTH = intPreferencesKey("max_highlight_length")
     }
 
-    // ── API Token ───────────────────────────────────────────────────────
+    // ── API Token (encrypted) ──────────────────────────────────────────
+
+    private val _apiToken = MutableStateFlow(
+        encryptedPrefs.getString("api_token", "") ?: ""
+    )
 
     /** The Readwise API access token. Emits an empty string when unset. */
-    val apiToken: Flow<String> = dataStore.data.map { prefs ->
-        prefs[Keys.API_TOKEN] ?: ""
+    val apiToken: Flow<String> = _apiToken
+
+    /** Persists the Readwise API [token] in encrypted storage. */
+    suspend fun setApiToken(token: String) {
+        encryptedPrefs.edit().putString("api_token", token).apply()
+        _apiToken.value = token
     }
 
-    /** Persists the Readwise API [token]. */
-    suspend fun setApiToken(token: String) {
-        dataStore.edit { prefs -> prefs[Keys.API_TOKEN] = token }
+    /**
+     * Migrates the API token from plain-text DataStore to EncryptedSharedPreferences.
+     * Called once on app startup; a no-op if the token was already migrated.
+     */
+    suspend fun migrateTokenIfNeeded() {
+        dataStore.edit { prefs ->
+            val oldToken = prefs[stringPreferencesKey("api_token")]
+            if (!oldToken.isNullOrBlank()) {
+                encryptedPrefs.edit().putString("api_token", oldToken).apply()
+                _apiToken.value = oldToken
+                prefs.remove(stringPreferencesKey("api_token"))
+            }
+        }
     }
 
     // ── Refresh Interval ────────────────────────────────────────────────

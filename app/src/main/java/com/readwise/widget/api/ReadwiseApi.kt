@@ -1,6 +1,7 @@
 package com.readwise.widget.api
 
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
+import com.readwise.widget.BuildConfig
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -8,6 +9,11 @@ import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.http.GET
 import retrofit2.http.Query
+
+/**
+ * Thrown when the Readwise API rejects the request due to an invalid or expired token.
+ */
+class ReadwiseAuthException(message: String) : Exception(message)
 
 /**
  * Retrofit interface for the Readwise v2 REST API.
@@ -56,7 +62,8 @@ interface ReadwiseApi {
  * The returned client:
  * - Authenticates every request with the provided [token] via a Bearer-style
  *   `Authorization: Token <token>` header.
- * - Logs request/response metadata at BASIC level for debugging.
+ * - Returns HTTP 401/403 responses as [ReadwiseAuthException] for clear error reporting.
+ * - Logs request/response metadata at BASIC level in debug builds only.
  * - Deserializes JSON with `ignoreUnknownKeys = true` so new API fields
  *   don't break parsing.
  *
@@ -67,22 +74,32 @@ fun createReadwiseApi(token: String): ReadwiseApi {
     // Allow unknown JSON keys so future API additions don't cause parse errors
     val json = Json { ignoreUnknownKeys = true }
 
-    // Log HTTP method, URL, and response code (no headers or body)
-    val loggingInterceptor = HttpLoggingInterceptor().apply {
-        level = HttpLoggingInterceptor.Level.BASIC
-    }
-
-    val client = OkHttpClient.Builder()
+    val clientBuilder = OkHttpClient.Builder()
         .addInterceptor { chain ->
             // Attach the API token to every outgoing request
             val request = chain.request().newBuilder()
                 .addHeader("Authorization", "Token $token")
                 .build()
-            chain.proceed(request)
+            val response = chain.proceed(request)
+            // Surface auth failures as a typed exception
+            if (response.code == 401 || response.code == 403) {
+                response.close()
+                throw ReadwiseAuthException(
+                    "Invalid or expired API token (HTTP ${response.code})"
+                )
+            }
+            response
         }
-        .addInterceptor(loggingInterceptor)
-        .build()
 
+    // Only log HTTP traffic in debug builds to avoid leaking URLs in production
+    if (BuildConfig.DEBUG) {
+        val loggingInterceptor = HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.BASIC
+        }
+        clientBuilder.addInterceptor(loggingInterceptor)
+    }
+
+    val client = clientBuilder.build()
     val contentType = "application/json".toMediaType()
 
     val retrofit = Retrofit.Builder()

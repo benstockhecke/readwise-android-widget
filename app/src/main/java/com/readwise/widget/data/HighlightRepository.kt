@@ -43,18 +43,27 @@ class HighlightRepository(
      * and stores them in the local Room database.  Tags and cross-refs are
      * extracted from each highlight's tag list.
      *
+     * Preserves user-set "excluded" flags across syncs by saving them before
+     * clearing and restoring them afterwards. Data is written page-by-page
+     * to reduce peak memory usage for large libraries.
+     *
      * If [apiProvider] returns `null` (no token configured) the function
      * returns immediately without modifying the database.
      */
     suspend fun syncHighlights() {
         val api = apiProvider() ?: return
 
-        // ── Fetch all books ────────────────────────────────────────────
-        val allBooks = mutableListOf<BookEntity>()
+        // Save excluded highlight IDs so they survive the full re-sync
+        val excludedIds = dao.getExcludedHighlightIds()
+
+        // Clear existing data so removed highlights/books are not retained
+        dao.clearAll()
+
+        // ── Fetch and persist books page by page ───────────────────────
         var bookPage = 1
         while (true) {
             val result = api.getBooks(page = bookPage)
-            allBooks += result.results.map { dto ->
+            dao.insertBooks(result.results.map { dto ->
                 BookEntity(
                     id = dto.id,
                     title = dto.title,
@@ -62,52 +71,52 @@ class HighlightRepository(
                     category = dto.category,
                     coverImageUrl = dto.coverImageUrl,
                 )
-            }
-            // null `next` means we've received the final page
+            })
             if (result.next == null) break
             bookPage++
         }
 
-        // ── Fetch all highlights ───────────────────────────────────────
-        val allHighlights = mutableListOf<HighlightEntity>()
-        val allTags = mutableMapOf<Long, TagEntity>()  // keyed by tag ID to deduplicate
-        val allCrossRefs = mutableListOf<HighlightTagCrossRef>()
-
+        // ── Fetch and persist highlights page by page ──────────────────
         var highlightPage = 1
         while (true) {
             val result = api.getHighlights(page = highlightPage)
+
+            val pageHighlights = mutableListOf<HighlightEntity>()
+            val pageTags = mutableMapOf<Long, TagEntity>()
+            val pageCrossRefs = mutableListOf<HighlightTagCrossRef>()
+
             for (dto in result.results) {
-                // Skip discarded/archived highlights
                 if (dto.isDiscard) continue
 
-                allHighlights += HighlightEntity(
+                pageHighlights += HighlightEntity(
                     id = dto.id,
                     text = dto.text,
                     note = dto.note,
                     bookId = dto.bookId,
                     highlightedAt = dto.highlightedAt,
                 )
-                // Collect tags and build cross-reference rows for this highlight
                 for (tag in dto.tags) {
-                    allTags[tag.id] = TagEntity(id = tag.id, name = tag.name)
-                    allCrossRefs += HighlightTagCrossRef(
+                    pageTags[tag.id] = TagEntity(id = tag.id, name = tag.name)
+                    pageCrossRefs += HighlightTagCrossRef(
                         highlightId = dto.id,
                         tagId = tag.id,
                     )
                 }
             }
-            // null `next` means we've received the final page
+
+            // Write this page's data to the database immediately
+            dao.insertHighlights(pageHighlights)
+            dao.insertTags(pageTags.values.toList())
+            dao.insertCrossRefs(pageCrossRefs)
+
             if (result.next == null) break
             highlightPage++
         }
 
-        // ── Persist everything inside a transaction ────────────────────
-        // Clear existing data first so removed highlights/books are not retained
-        dao.clearAll()
-        dao.insertBooks(allBooks)
-        dao.insertHighlights(allHighlights)
-        dao.insertTags(allTags.values.toList())
-        dao.insertCrossRefs(allCrossRefs)
+        // Restore excluded flags that were set before the sync
+        if (excludedIds.isNotEmpty()) {
+            dao.restoreExcludedFlags(excludedIds)
+        }
     }
 
     /**
