@@ -1,0 +1,25 @@
+# Build outputs
+/build/
+app/build/
+
+# Gradle
+.gradle/
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# Kotlin
+.kotlin/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Signing
+keystore.jks
+*.keystore
+
+# Claude Code
+.claude/

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Readwise Widget</string>
+    <string name="widget_name">Readwise Highlight</string>
+    <string name="widget_description">Zeigt zufällige Readwise Highlights an</string>
+</resources>
