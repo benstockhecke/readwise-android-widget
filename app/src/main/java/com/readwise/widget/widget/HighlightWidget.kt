@@ -31,8 +31,25 @@ import com.readwise.widget.ReadwiseApp
 import com.readwise.widget.data.HighlightWithBook
 import kotlinx.coroutines.flow.first
 
+/**
+ * Glance [GlanceAppWidget] that displays a single random highlight on the home screen.
+ *
+ * Each time [provideGlance] is called (on placement, update, or tap) the widget:
+ * 1. Reads all appearance and filter settings from [SettingsDataStore].
+ * 2. Selects a random highlight from [HighlightRepository] using the current filters.
+ * 3. Renders the result via the stateless [WidgetContent] composable.
+ *
+ * Tapping the widget triggers [RefreshAction], which calls [update] to pick a new
+ * random highlight.
+ */
 class HighlightWidget : GlanceAppWidget() {
 
+    /**
+     * Called by Glance to supply the widget's UI content.
+     *
+     * Suspends while reading settings and querying the database, then hands off
+     * to [provideContent] to render the composable tree.
+     */
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val app = context.applicationContext as ReadwiseApp
         val repository = app.highlightRepository
@@ -54,7 +71,7 @@ class HighlightWidget : GlanceAppWidget() {
         val tagName = settings.filterTagName.first()
         val maxLength = settings.maxHighlightLength.first()
 
-        // Get a random highlight
+        // Get a random highlight based on the active filters
         val highlight = repository.getRandomHighlight(bookId = bookId, tagName = tagName, maxLength = maxLength)
 
         provideContent {
@@ -76,6 +93,24 @@ class HighlightWidget : GlanceAppWidget() {
     }
 }
 
+/**
+ * Stateless composable that renders a highlight inside the widget frame.
+ *
+ * Highlights longer than 500 characters are truncated with an ellipsis to avoid
+ * overflowing the widget's fixed dimensions. When no highlight is available a
+ * prompt message guides the user to open the app and sync.
+ *
+ * @param highlight The highlight to display, or `null` if the database is empty.
+ * @param fontSize Text size in SP for the main highlight body.
+ * @param backgroundColor Widget background color as a packed ARGB long.
+ * @param textColor Highlight body text color as a packed ARGB long.
+ * @param sourceColor Book/author attribution text color as a packed ARGB long.
+ * @param cornerRadius Corner radius of the widget background in DP.
+ * @param borderWidth Border stroke width in DP (currently approximated; see inline note).
+ * @param borderColor Border stroke color as a packed ARGB long.
+ * @param padding Inner content padding in DP.
+ * @param fontFamily Font family identifier for the widget text.
+ */
 @Composable
 private fun WidgetContent(
     highlight: HighlightWithBook?,
@@ -89,6 +124,7 @@ private fun WidgetContent(
     padding: Float,
     fontFamily: String,
 ) {
+    // Convert packed ARGB longs to Glance ColorProviders
     val bgColor = ColorProvider(Color(backgroundColor.toInt()))
     val txtColor = ColorProvider(Color(textColor.toInt()))
     val srcColor = ColorProvider(Color(sourceColor.toInt()))
@@ -108,6 +144,7 @@ private fun WidgetContent(
         baseModifier
     }
 
+    // The entire widget is tappable; a tap triggers RefreshAction to show a new highlight
     Column(
         modifier = widgetModifier.then(
             GlanceModifier.clickable(actionRunCallback<RefreshAction>())
@@ -116,12 +153,14 @@ private fun WidgetContent(
         horizontalAlignment = Alignment.Horizontal.CenterHorizontally,
     ) {
         if (highlight != null) {
+            // Truncate very long highlights to prevent layout overflow
             val displayText = if (highlight.text.length > 500) {
                 highlight.text.take(497) + "..."
             } else {
                 highlight.text
             }
 
+            // Render the highlight wrapped in typographic quotation marks
             Text(
                 text = "\u201C$displayText\u201D",
                 style = TextStyle(
@@ -135,14 +174,16 @@ private fun WidgetContent(
 
             Spacer(modifier = GlanceModifier.height(8.dp))
 
+            // Build the attribution line: "Book Title — Author" (author omitted if blank)
             val sourceLine = buildString {
                 append(highlight.bookTitle)
                 if (!highlight.bookAuthor.isNullOrBlank()) {
-                    append(" \u2014 ")
+                    append(" \u2014 ")  // em dash separator
                     append(highlight.bookAuthor)
                 }
             }
 
+            // Render the attribution at a slightly smaller size than the body text
             Text(
                 text = sourceLine,
                 style = TextStyle(
@@ -153,6 +194,7 @@ private fun WidgetContent(
                 maxLines = 2,
             )
         } else {
+            // Fallback message shown when no highlights have been synced yet
             Text(
                 text = "No highlights yet. Open app to sync.",
                 style = TextStyle(
@@ -164,6 +206,12 @@ private fun WidgetContent(
     }
 }
 
+/**
+ * Glance [ActionCallback] triggered when the user taps the widget.
+ *
+ * Forces the widget to re-run [HighlightWidget.provideGlance], which picks a new
+ * random highlight and redraws the UI.
+ */
 class RefreshAction : ActionCallback {
     override suspend fun onAction(
         context: Context,
